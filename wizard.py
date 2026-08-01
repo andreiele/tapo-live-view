@@ -20,6 +20,7 @@ from app_common import (
     find_executable,
     get_password,
     load_config,
+    set_app_user_model_id,
     setup_logging,
 )
 from theme import apply_style, palette, set_window_icon
@@ -280,6 +281,7 @@ class Wizard:
 
 def main() -> None:
     setup_logging()
+    set_app_user_model_id()
     if os.name != "nt":
         fatal_dialog("This build is for Windows because it embeds ffplay using the Win32 API.")
         return

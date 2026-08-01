@@ -10,9 +10,23 @@ from urllib.parse import quote
 
 APP_NAME = "Tapo Live View"
 SERVICE_NAME = "tapo-live-view"
+APP_USER_MODEL_ID = "TapoLiveView.App"
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.json"
 LOG_PATH = ROOT / "tapo-live.log"
+
+
+def set_app_user_model_id() -> None:
+    """Give this process its own taskbar identity so Windows shows the app's
+    own icon instead of grouping it (and its icon) under python(w).exe."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except Exception:
+        pass
 
 
 def setup_logging() -> None:
