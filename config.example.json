@@ -1,0 +1,12 @@
+{
+  "camera_name": "Living Room",
+  "host": "192.168.1.52",
+  "port": 554,
+  "username": "camerauser",
+  "stream": "stream1",
+  "rtsp_transport": "tcp",
+  "window_width": 1100,
+  "window_height": 700,
+  "onvif_port": 2020,
+  "ptz_speed": 0.5
+}

@@ -1,0 +1,12 @@
+.claude/
+.venv/
+venv/
+__pycache__/
+*.pyc
+config.json
+*.log
+.vscode/
+.idea/
+build/
+dist/
+*.spec
