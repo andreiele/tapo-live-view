@@ -8,5 +8,9 @@
   "window_width": 1100,
   "window_height": 700,
   "onvif_port": 2020,
-  "ptz_speed": 0.5
+  "ptz_speed": 0.5,
+  "theme": "dark",
+  "show_branding": true,
+  "show_date": true,
+  "show_ptz": true
 }

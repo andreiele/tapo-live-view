@@ -2,7 +2,8 @@
 setlocal
 cd /d "%~dp0"
 
-set "TAPO_TARGET=%~dp0Run.bat"
+set "TAPO_TARGET=wscript.exe"
+set "TAPO_ARGS=//B \"%~dp0run_hidden.vbs\""
 set "TAPO_WORKDIR=%~dp0"
 set "TAPO_ICON=%~dp0tapo.ico"
 
@@ -15,6 +16,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ws = New-Object -ComObject WScript.Shell;" ^
   "$s = $ws.CreateShortcut($link);" ^
   "$s.TargetPath = $env:TAPO_TARGET;" ^
+  "$s.Arguments = $env:TAPO_ARGS;" ^
   "$s.WorkingDirectory = $env:TAPO_WORKDIR;" ^
   "if (Test-Path -LiteralPath $env:TAPO_ICON) { $s.IconLocation = $env:TAPO_ICON };" ^
   "$s.Description = 'Open the Tapo camera live view';" ^

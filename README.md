@@ -1,23 +1,32 @@
 # Tapo Live View
 
-A small Windows desktop app that opens one TP-Link Tapo camera's local RTSP live feed in its own window. It is inspired by the structure of `andreiele/blink-live-view`, but it talks directly to the camera over your home network instead of using a cloud service.
+A modern Windows desktop app that opens one TP-Link Tapo camera's local RTSP live feed in its own window — direct to the camera over your home network, no browser and no Tapo cloud login involved.
+
+> The screenshots below use a placeholder lion illustration instead of a real camera feed.
+
+| Live view (dark) | Live view (light) |
+|---|---|
+| ![Live view, dark theme](docs/screenshots/live-view-dark.png) | ![Live view, light theme](docs/screenshots/live-view-light.png) |
 
 ## Features
 
-- One-click live view from a Windows desktop shortcut
-- Direct local-network RTSP connection
+- One-click live view from a Windows desktop shortcut — no terminal window, ever
+- Direct local-network RTSP connection, decoded locally with FFmpeg/ffplay
 - High-quality (`stream1`) and standard-quality (`stream2`) switching
 - Reconnect, mute/unmute and fullscreen controls
-- On-screen pan/tilt controls over ONVIF for cameras that physically move
-- Low-latency TCP playback through FFmpeg/ffplay
+- On-screen pan/tilt controls over ONVIF for cameras that physically move, rendered as an always-on-top overlay so they never get hidden behind the video
+- Light and dark themes
+- A live session timer and today's date in the toolbar
+- A **Settings** panel to show/hide the app branding, the date, and the PTZ pad
+- An **About** window with a link back to this repository
 - Camera password stored in Windows Credential Manager, not `config.json`
-- No browser and no Tapo cloud login in the app
+- A guided setup wizard: install → camera setup → live view, all in one window, with a green checkmark once the connection test passes
 
 ## Requirements
 
 - Windows 10 or Windows 11
-- Python 3.9 or newer
-- FFmpeg, including `ffplay.exe`
+- Python 3.9 or newer (the setup wizard installs everything else for you)
+- FFmpeg, including `ffplay.exe` (the wizard can install this via `winget`)
 - A wired Tapo camera that supports RTSP, such as many C100/C110/C200/C210 models
 - PC and camera connected to the same local network
 
@@ -31,36 +40,65 @@ A small Windows desktop app that opens one TP-Link Tapo camera's local RTSP live
 ## Install
 
 1. Extract this folder somewhere permanent, for example `C:\Tools\tapo-live-view`.
-2. Double-click `Setup.bat`.
-3. Enter the camera name, IP address and Camera Account credentials.
-4. Run `Create Desktop Shortcut.bat`.
-5. Open **Tapo Live View** from the desktop.
+2. Double-click `Setup.bat`. A window opens showing install progress (no console, ever) —
 
-`Setup.bat` can install FFmpeg through Windows Package Manager when it is missing.
+   ![Installing](docs/screenshots/installing.png)
+
+3. It moves straight into camera setup in the same window:
+
+   ![Camera setup](docs/screenshots/setup.png)
+
+4. Enter the camera name, IP address and Camera Account credentials, then **Test connection** and **Save setup**. A green checkmark confirms the connection before the live view opens automatically:
+
+   ![Connected](docs/screenshots/connected.png)
+
+5. Run `Create Desktop Shortcut.bat` so **Tapo Live View** opens straight from the desktop next time — with no console flash at all.
+
+Day to day, just use `Run.bat` or the desktop shortcut; it skips straight to the live view once setup is done.
+
+## Settings
+
+Open **⚙ Settings** from the toolbar to toggle:
+
+- **Appearance** — light or dark theme, applied instantly
+- **On-screen display** — show/hide the "Tapo Live View" branding and today's date
+- **Controls** — show/hide the pan/tilt (PTZ) pad
+
+There's also a one-click **🕹 PTZ** toolbar button for quickly hiding/showing the pad without opening Settings.
+
+![Settings](docs/screenshots/settings.png)
 
 ## Pan/tilt controls
 
-If your camera model physically pans and tilts (for example Tapo C200/C210/C225), a directional pad
-appears automatically in the bottom-right corner of the live view. It uses the camera's ONVIF service
-(normally on port 554-adjacent port `2020`) with the same Camera Account credentials as RTSP — no
-extra setup beyond what `Setup.bat` already asks for.
+If your camera model physically pans and tilts (for example Tapo C200/C210/C225), a directional pad appears automatically over the bottom-right corner of the live view. It uses the camera's ONVIF service (by default port `2020`) with the same Camera Account credentials as RTSP — no extra setup beyond what the wizard already asks for.
 
 - The pad only appears after the app confirms the camera supports PTZ; fixed-position cameras never show it.
+- It renders in its own always-on-top overlay window, so it stays visible on top of the video instead of being hidden behind it.
 - Press and hold a direction to move, release to stop; the center button returns to the camera's home position (if it has one).
 - If your camera uses a non-default ONVIF port, set it during setup or edit `onvif_port` in `config.json`.
 - `ptz_speed` in `config.json` (0.0–1.0, default `0.5`) controls how fast the camera moves.
+- Hide it any time from **⚙ Settings** or the toolbar's **🕹 PTZ** button.
+
+## About
+
+Click **ℹ About** in the toolbar for a short description of the app and a link back to this repository: https://github.com/andreiele/tapo-live-view
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `Setup.bat` | Creates the local Python environment, installs dependencies and opens camera setup |
-| `Run.bat` | Opens the configured live view |
-| `Create Desktop Shortcut.bat` | Creates a desktop shortcut |
-| `first_run.py` | Setup window and connection test |
-| `live.py` | Native Windows live-view window and embedded ffplay process |
+| `Setup.bat` / `Run.bat` | Silent (no console) launchers — hand off to `run_hidden.vbs` |
+| `run_hidden.vbs` | Launches the wizard with `pythonw`/`py -3w`, invisibly |
+| `wizard.py` | Single-window onboarding flow: install → setup → live |
+| `Create Desktop Shortcut.bat` | Creates a desktop shortcut that opens silently |
+| `first_run.py` | Camera setup form, used standalone or embedded in the wizard |
+| `live.py` | The live-view window: embedded ffplay, PTZ overlay, settings, timer |
+| `theme.py` | Light/dark palettes, ttk styling, window icon helper |
+| `settings_window.py` | Settings panel (theme, branding, date, PTZ toggles) |
+| `about_window.py` | About window |
 | `app_common.py` | Configuration, RTSP URL, credential and network helpers |
 | `ptz.py` | ONVIF pan/tilt controller used by the live view |
+| `demo_player.py` / `assets/lion.png` | Stand-in video source used only by `TAPO_DEMO=1` (screenshots/QA) |
 | `config.example.json` | Example configuration without credentials |
 
 ## Troubleshooting
@@ -79,9 +117,7 @@ Try **Standard quality**. Other Tapo app, NVR, RTSP or Tapo Care sessions may al
 
 ### No pan/tilt controls appear
 
-Your camera model is likely fixed-position (many Tapo cameras, including most `C1xx` models, do not
-physically move). If the camera does support PTZ, confirm ONVIF is reachable at `<camera IP>:2020`
-and that the Camera Account credentials are correct; check `tapo-live.log` for the specific ONVIF error.
+Your camera model is likely fixed-position (many Tapo cameras, including most `C1xx` models, do not physically move). If the camera does support PTZ, confirm ONVIF is reachable at `<camera IP>:2020` and that the Camera Account credentials are correct; check `tapo-live.log` for the specific ONVIF error. You can also confirm it isn't just hidden — check **⚙ Settings → Show pan/tilt (PTZ) control pad**.
 
 ### ffplay is missing
 

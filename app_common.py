@@ -33,7 +33,7 @@ def load_config() -> dict:
     missing = [key for key in required if not data.get(key)]
     if missing:
         raise ValueError(f"config.json is missing: {', '.join(missing)}")
-    return data
+    return apply_display_defaults(data)
 
 
 def save_config(data: dict) -> None:
@@ -42,6 +42,26 @@ def save_config(data: dict) -> None:
         json.dump(data, handle, indent=2)
         handle.write("\n")
     temp.replace(CONFIG_PATH)
+
+
+DISPLAY_DEFAULTS = {
+    "theme": "dark",
+    "show_branding": True,
+    "show_date": True,
+    "show_ptz": True,
+}
+
+
+def apply_display_defaults(config: dict) -> dict:
+    for key, value in DISPLAY_DEFAULTS.items():
+        config.setdefault(key, value)
+    return config
+
+
+def update_config(config: dict, **changes) -> dict:
+    config.update(changes)
+    save_config(config)
+    return config
 
 
 def credential_key(config: dict) -> str:

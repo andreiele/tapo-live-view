@@ -6,14 +6,31 @@ from tkinter import messagebox, ttk
 
 from app_common import APP_NAME, save_config, save_password, setup_logging, test_port
 from ptz import DEFAULT_ONVIF_PORT
+from theme import apply_style, palette, set_window_icon
 
 
 class SetupWindow:
-    def __init__(self, root: tk.Tk) -> None:
+    """Camera setup form.
+
+    Can be used standalone (its own Tk root) or embedded inside another
+    Tk container (the onboarding wizard passes a Frame as ``container``)
+    so the whole install → setup → live flow can live in one window.
+    """
+
+    def __init__(self, root: tk.Misc, container: tk.Misc | None = None, on_saved=None, theme_name: str | None = None) -> None:
         self.root = root
-        root.title(f"{APP_NAME} Setup")
-        root.geometry("540x540")
-        root.resizable(False, False)
+        self.on_saved = on_saved
+        self.colors = palette(theme_name)
+        owns_window = container is None
+        container = container or root
+
+        if owns_window:
+            root.title(f"{APP_NAME} Setup")
+            root.geometry("560x600")
+            root.resizable(False, False)
+            set_window_icon(root)
+            apply_style(root, self.colors)
+            root.configure(bg=self.colors["bg"])
 
         self.name = tk.StringVar(value="Living Room")
         self.host = tk.StringVar()
@@ -23,13 +40,13 @@ class SetupWindow:
         self.onvif_port = tk.StringVar(value=str(DEFAULT_ONVIF_PORT))
         self.status = tk.StringVar(value="Enter the camera account details created in the Tapo app.")
 
-        outer = ttk.Frame(root, padding=24)
+        outer = ttk.Frame(container, padding=24)
         outer.pack(fill="both", expand=True)
-        ttk.Label(outer, text="Tapo Live View", font=("Segoe UI", 20, "bold")).pack(anchor="w")
+        ttk.Label(outer, text="Camera setup", style="Heading.TLabel").pack(anchor="w")
         ttk.Label(
             outer,
             text="Connect directly to a Tapo camera on your home network.",
-            font=("Segoe UI", 10),
+            style="Dim.TLabel",
         ).pack(anchor="w", pady=(2, 20))
 
         form = ttk.Frame(outer)
@@ -53,13 +70,18 @@ class SetupWindow:
             "If your camera physically pans and tilts, on-screen controls appear automatically "
             "in the live view — leave the ONVIF port at 2020 unless you changed it on the camera."
         )
-        ttk.Label(outer, text=note, wraplength=485, foreground="#555555").pack(anchor="w", pady=(18, 8))
-        ttk.Label(outer, textvariable=self.status, wraplength=485).pack(anchor="w", pady=(4, 14))
+        ttk.Label(outer, text=note, wraplength=485, style="Dim.TLabel").pack(anchor="w", pady=(18, 8))
+
+        status_row = ttk.Frame(outer)
+        status_row.pack(anchor="w", fill="x", pady=(4, 14))
+        self.status_check = ttk.Label(status_row, text="", style="Status.TLabel")
+        self.status_check.pack(side="left")
+        ttk.Label(status_row, textvariable=self.status, wraplength=440, style="Dim.TLabel").pack(side="left")
 
         buttons = ttk.Frame(outer)
         buttons.pack(fill="x", side="bottom")
         ttk.Button(buttons, text="Test connection", command=self.test).pack(side="left")
-        ttk.Button(buttons, text="Save setup", command=self.save).pack(side="right")
+        ttk.Button(buttons, text="Save setup", style="Accent.TButton", command=self.save).pack(side="right")
 
     @staticmethod
     def _field(parent: ttk.Frame, row: int, label: str, variable: tk.StringVar, show: str | None = None) -> None:
@@ -94,6 +116,10 @@ class SetupWindow:
             "window_width": 1100,
             "window_height": 700,
             "onvif_port": onvif_port,
+            "theme": self.colors["name"],
+            "show_branding": True,
+            "show_date": True,
+            "show_ptz": True,
         }
 
     def test(self) -> bool:
@@ -102,26 +128,33 @@ class SetupWindow:
         except ValueError as exc:
             messagebox.showwarning(APP_NAME, str(exc))
             return False
+        self.status_check.configure(text="")
         self.status.set("Testing camera connection…")
         self.root.update_idletasks()
         ok, detail = test_port(config["host"], config["port"])
         self.status.set(detail)
-        if not ok:
+        if ok:
+            self.status_check.configure(text="✓")
+        else:
             messagebox.showerror(APP_NAME, detail)
         return ok
 
-    def save(self) -> None:
+    def save(self) -> bool:
         try:
             config = self.values()
             if not self.test():
-                return
+                return False
             save_config(config)
             save_password(config, self.password.get())
         except Exception as exc:
             messagebox.showerror(APP_NAME, f"Setup could not be saved:\n\n{exc}")
-            return
-        messagebox.showinfo(APP_NAME, "Setup saved. You can now run Run.bat or create the Desktop shortcut.")
-        self.root.destroy()
+            return False
+        if self.on_saved is not None:
+            self.on_saved(config)
+        else:
+            messagebox.showinfo(APP_NAME, "Setup saved. You can now run Run.bat or create the Desktop shortcut.")
+            self.root.destroy()
+        return True
 
 
 def main() -> None:
