@@ -2,8 +2,15 @@
 setlocal
 cd /d "%~dp0"
 
-set "TAPO_TARGET=wscript.exe"
-set "TAPO_ARGS=//B \"%~dp0run_hidden.vbs\""
+rem Point the shortcut straight at the windowless Python so no console ever flashes.
+rem Before Setup.bat has created .venv, fall back to the silent VBS launcher.
+if exist "%~dp0.venv\Scripts\pythonw.exe" (
+  set "TAPO_TARGET=%~dp0.venv\Scripts\pythonw.exe"
+  set "TAPO_ARGS="%~dp0wizard.py""
+) else (
+  set "TAPO_TARGET=wscript.exe"
+  set "TAPO_ARGS=//B "%~dp0run_hidden.vbs""
+)
 set "TAPO_WORKDIR=%~dp0"
 set "TAPO_ICON=%~dp0tapo.ico"
 

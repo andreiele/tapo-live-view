@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import logging
 import os
 import queue
 import shutil
@@ -10,23 +11,28 @@ import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 from app_common import (
     APP_NAME,
-    CONFIG_PATH,
     ROOT,
+    apply_display_defaults,
+    camera_id,
     fatal_dialog,
     find_executable,
     get_password,
+    has_cameras,
     load_config,
+    remove_camera,
     set_app_user_model_id,
     setup_logging,
+    test_port,
 )
 from theme import apply_style, palette, set_window_icon
 
 CREATE_NO_WINDOW = 0x08000000
 VENV_DIR = ROOT / ".venv"
+DEMO = os.environ.get("TAPO_DEMO") == "1"
 
 
 def venv_python(name: str = "python.exe") -> Path:
@@ -45,43 +51,95 @@ def deps_installed() -> bool:
 
 
 def initial_stage(force_setup: bool) -> str:
+    if DEMO:
+        return "app"
     if running_under_venv() and deps_installed():
-        if force_setup or not CONFIG_PATH.exists():
+        if force_setup or not has_cameras():
             return "setup"
-        return "live"
+        return "app"
     return "install"
 
 
+def demo_config() -> dict:
+    """Stand-in cameras for TAPO_DEMO=1 runs (screenshots/QA, no hardware)."""
+    names = ("Demo Lion", "Front Door", "Garden", "Garage")
+    cameras = [
+        {"camera_name": name, "host": f"127.0.0.{index}", "port": 554, "username": "demo", "stream": "stream1"}
+        for index, name in enumerate(names, start=1)
+    ]
+    return apply_display_defaults({"cameras": cameras})
+
+
+def app_geometry() -> str:
+    try:
+        config = load_config()
+    except Exception:
+        config = apply_display_defaults({})
+    return f"{config['window_width']}x{config['window_height']}"
+
+
 class Wizard:
+    """The app's single window: install → setup → loading → cameras → live."""
+
     def __init__(self, root: tk.Tk, force_setup: bool, geometry: str | None) -> None:
         self.root = root
         self.force_setup = force_setup
         self.colors = palette("dark")
         self.log_queue: "queue.Queue[str]" = queue.Queue()
+        self.config: dict | None = None
+        self.passwords: dict[str, str | None] = {}
+        self.ffplay = ""
+        self.statuses: dict[str, tuple[str, str]] = {}
+        self.live = None
+        self.panel = None
 
-        root.title(f"{APP_NAME} Setup")
-        root.geometry(geometry or "680x560")
-        root.minsize(560, 460)
+        stage = initial_stage(force_setup)
+        if stage == "app" and not DEMO:
+            try:
+                self.colors = palette(load_config().get("theme"))
+            except Exception:
+                pass
+        root.title(APP_NAME if stage == "app" else f"{APP_NAME} Setup")
+        root.geometry(geometry or (app_geometry() if stage == "app" else "680x560"))
+        root.minsize(560, 520)
         set_window_icon(root)
         apply_style(root, self.colors)
         root.configure(bg=self.colors["bg"])
-        root.protocol("WM_DELETE_WINDOW", root.destroy)
+        root.protocol("WM_DELETE_WINDOW", self.close)
 
         self.container = ttk.Frame(root, padding=0)
         self.container.pack(fill="both", expand=True)
 
-        stage = initial_stage(force_setup)
         if stage == "install":
             self.show_install_stage()
         elif stage == "setup":
             self.show_setup_stage()
         else:
-            self.show_live_stage()
+            self.show_loading_stage()
+
+    def _clear(self) -> None:
+        self._close_panel()
+        if self.live is not None:
+            self.live.teardown()
+            self.live = None
+        for child in self.container.winfo_children():
+            child.destroy()
+
+    def _close_panel(self) -> None:
+        if self.panel is not None:
+            panel, self.panel = self.panel, None
+            panel.close()
+
+    def close(self) -> None:
+        self._close_panel()
+        if self.live is not None:
+            self.live.teardown()
+            self.live = None
+        self.root.destroy()
 
     # -------------------------------------------------------------- install
     def show_install_stage(self) -> None:
-        for child in self.container.winfo_children():
-            child.destroy()
+        self._clear()
         colors = self.colors
 
         pad = ttk.Frame(self.container, padding=24)
@@ -235,15 +293,22 @@ class Wizard:
 
     # ---------------------------------------------------------------- setup
     def show_setup_stage(self) -> None:
-        for child in self.container.winfo_children():
-            child.destroy()
         from first_run import SetupWindow
 
-        SetupWindow(self.root, container=self.container, on_saved=self._on_setup_saved, theme_name="dark")
+        self._clear()
+        count = len(self.config["cameras"]) if self.config else 0
+        self.root.title(f"{APP_NAME} Setup")
+        SetupWindow(
+            self.root,
+            container=self.container,
+            on_saved=self._on_setup_saved,
+            theme_name=self.colors["name"],
+            on_cancel=self.show_selector if count else None,
+            default_name="Living Room" if count == 0 else f"Camera {count + 1}",
+        )
 
-    def _on_setup_saved(self, config: dict) -> None:
-        for child in self.container.winfo_children():
-            child.destroy()
+    def _on_setup_saved(self, _camera: dict) -> None:
+        self._clear()
         colors = self.colors
         screen = ttk.Frame(self.container, padding=24)
         screen.pack(fill="both", expand=True)
@@ -252,31 +317,165 @@ class Wizard:
         check = tk.Label(center, text="✓", font=("Segoe UI", 48, "bold"), fg=colors["success"], bg=colors["bg"])
         check.pack()
         ttk.Label(center, text="Connected", style="Heading.TLabel").pack(pady=(6, 0))
-        ttk.Label(center, text="Opening the live view…", style="Dim.TLabel").pack()
-        self.root.after(1100, lambda: self.show_live_stage(config))
+        ttk.Label(center, text="Loading your cameras…", style="Dim.TLabel").pack()
+        self.root.after(1100, lambda: self.show_loading_stage("Loading cameras…"))
+
+    # -------------------------------------------------------------- loading
+    def show_loading_stage(self, message: str = "Starting…") -> None:
+        from selector import LoadingScreen
+
+        self._clear()
+        self._grow_to_app_size()
+        self.root.title(APP_NAME)
+        self.loading = LoadingScreen(self.container, self.colors, message)
+        threading.Thread(target=self._load_worker, daemon=True).start()
+
+    def _grow_to_app_size(self) -> None:
+        """Coming from the compact setup window, grow to the live-view size."""
+        self.root.update_idletasks()
+        width, height = (int(value) for value in app_geometry().split("x"))
+        current_w, current_h = self.root.winfo_width(), self.root.winfo_height()
+        if current_w < width - 50 or current_h < height - 50:
+            x = max(0, self.root.winfo_x() - (width - current_w) // 2)
+            y = max(0, self.root.winfo_y() - (height - current_h) // 2)
+            self.root.geometry(f"{width}x{height}+{x}+{y}")
+        self.root.minsize(720, 520)
+
+    def _set_loading_status(self, text: str) -> None:
+        self.root.after(0, lambda: self.loading.set_status(text))
+
+    def _load_worker(self) -> None:
+        try:
+            if DEMO:
+                config = demo_config()
+                passwords = {camera_id(camera): "demo" for camera in config["cameras"]}
+                ffplay = "demo"
+            else:
+                self._set_loading_status("Reading configuration…")
+                config = load_config()
+                self._set_loading_status("Looking for FFmpeg…")
+                ffplay = find_executable("ffplay.exe")
+                if not ffplay:
+                    raise RuntimeError(
+                        "ffplay.exe was not found. Install FFmpeg with 'winget install Gyan.FFmpeg', "
+                        "then close and reopen the app."
+                    )
+                self._set_loading_status("Unlocking camera credentials…")
+                passwords = {}
+                for camera in config["cameras"]:
+                    try:
+                        passwords[camera_id(camera)] = get_password(camera)
+                    except Exception as exc:
+                        logging.warning("No password for %s: %s", camera["camera_name"], exc)
+                        passwords[camera_id(camera)] = None
+        except Exception as exc:
+            message = str(exc)
+            self.root.after(0, lambda: self._fatal(message))
+            return
+        self.root.after(0, lambda: self._on_loaded(config, passwords, ffplay))
+
+    def _fatal(self, message: str) -> None:
+        messagebox.showerror(APP_NAME, message)
+        self.close()
+
+    def _on_loaded(self, config: dict, passwords: dict, ffplay: str) -> None:
+        self.config = config
+        self.passwords = passwords
+        self.ffplay = ffplay
+        self.statuses = {}
+        self._apply_theme(palette(config.get("theme")))
+        if config["cameras"]:
+            self.show_selector()
+        else:
+            self.show_setup_stage()
+
+    def _apply_theme(self, colors: dict) -> None:
+        self.colors = colors
+        apply_style(self.root, colors)
+        self.root.configure(bg=colors["bg"])
+
+    # ------------------------------------------------------------- selector
+    def _probe(self, camera: dict) -> tuple[bool, str]:
+        if DEMO:
+            return True, "Demo camera"
+        return test_port(camera["host"], int(camera.get("port", 554)))
+
+    def show_selector(self) -> None:
+        from about_window import AboutPanel
+        from selector import CameraSelector
+
+        self._clear()
+        self.root.title(APP_NAME)
+        CameraSelector(
+            self.root,
+            self.container,
+            self.config,
+            self.colors,
+            self.statuses,
+            probe=self._probe,
+            on_open=lambda camera: self.show_live("single", camera),
+            on_multi=lambda: self.show_live("multi"),
+            on_add=self.show_setup_stage,
+            on_remove=self._remove_camera,
+            on_settings=self._open_settings,
+            on_about=lambda: self._show_panel(AboutPanel(self.root, self.config.get("theme"))),
+        )
+
+    def _show_panel(self, panel) -> None:
+        self._close_panel()
+        self.panel = panel
+
+    def _open_settings(self) -> None:
+        from settings_window import SettingsPanel
+
+        def changed(changes: dict) -> None:
+            if palette(changes.get("theme"))["name"] != self.colors["name"]:
+                self._apply_theme(palette(changes.get("theme")))
+                panel, self.panel = self.panel, None  # keep the open panel across the re-render
+                self.show_selector()
+                self.panel = panel
+
+        self._show_panel(SettingsPanel(self.root, self.config, changed))
+
+    def _remove_camera(self, camera: dict) -> None:
+        if DEMO:
+            return
+        confirmed = messagebox.askyesno(
+            APP_NAME,
+            f"Remove “{camera['camera_name']}” ({camera['host']}) from {APP_NAME}?\n\n"
+            "Its saved password is deleted too. You can add it again any time.",
+        )
+        if not confirmed:
+            return
+        remove_camera(self.config, camera)
+        self.passwords.pop(camera_id(camera), None)
+        self.statuses.pop(camera_id(camera), None)
+        if self.config["cameras"]:
+            self.show_selector()
+        else:
+            self.show_setup_stage()
 
     # ----------------------------------------------------------------- live
-    def show_live_stage(self, config: dict | None = None) -> None:
-        for child in self.container.winfo_children():
-            child.destroy()
-        self.container.destroy()
+    def show_live(self, mode: str, camera: dict | None = None) -> None:
         from live import LiveView
 
-        try:
-            if config is None:
-                config = load_config()
-            password = get_password(config)
-            ffplay = find_executable("ffplay.exe")
-            if not ffplay:
-                raise RuntimeError(
-                    "ffplay.exe was not found. Install FFmpeg with 'winget install Gyan.FFmpeg', "
-                    "then close and reopen the app."
-                )
-        except Exception as exc:
-            fatal_dialog(str(exc))
-            self.root.destroy()
-            return
-        LiveView(self.root, config, password, ffplay)
+        self._clear()
+        self.live = LiveView(
+            self.root,
+            self.container,
+            self.config,
+            self.passwords,
+            self.ffplay,
+            mode=mode,
+            camera=camera,
+            on_back=self._back_to_selector,
+            on_theme_change=self._apply_theme,
+            demo=DEMO,
+        )
+
+    def _back_to_selector(self) -> None:
+        self.live = None
+        self.show_selector()
 
 
 def main() -> None:
