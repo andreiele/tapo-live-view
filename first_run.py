@@ -4,7 +4,7 @@ import ipaddress
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from app_common import APP_NAME, save_config, save_password, setup_logging, test_port
+from app_common import APP_NAME, add_camera, save_password, setup_logging, test_port
 from ptz import DEFAULT_ONVIF_PORT
 from theme import apply_style, palette, set_window_icon
 
@@ -17,7 +17,15 @@ class SetupWindow:
     so the whole install → setup → live flow can live in one window.
     """
 
-    def __init__(self, root: tk.Misc, container: tk.Misc | None = None, on_saved=None, theme_name: str | None = None) -> None:
+    def __init__(
+        self,
+        root: tk.Misc,
+        container: tk.Misc | None = None,
+        on_saved=None,
+        theme_name: str | None = None,
+        on_cancel=None,
+        default_name: str = "Living Room",
+    ) -> None:
         self.root = root
         self.on_saved = on_saved
         self.colors = palette(theme_name)
@@ -32,7 +40,7 @@ class SetupWindow:
             apply_style(root, self.colors)
             root.configure(bg=self.colors["bg"])
 
-        self.name = tk.StringVar(value="Living Room")
+        self.name = tk.StringVar(value=default_name)
         self.host = tk.StringVar()
         self.username = tk.StringVar()
         self.password = tk.StringVar()
@@ -42,7 +50,7 @@ class SetupWindow:
 
         outer = ttk.Frame(container, padding=24)
         outer.pack(fill="both", expand=True)
-        ttk.Label(outer, text="Camera setup", style="Heading.TLabel").pack(anchor="w")
+        ttk.Label(outer, text="Add a camera" if on_cancel else "Camera setup", style="Heading.TLabel").pack(anchor="w")
         ttk.Label(
             outer,
             text="Connect directly to a Tapo camera on your home network.",
@@ -82,6 +90,8 @@ class SetupWindow:
         buttons.pack(fill="x", side="bottom")
         ttk.Button(buttons, text="Test connection", command=self.test).pack(side="left")
         ttk.Button(buttons, text="Save setup", style="Accent.TButton", command=self.save).pack(side="right")
+        if on_cancel is not None:
+            ttk.Button(buttons, text="Cancel", command=on_cancel).pack(side="right", padx=(0, 8))
 
     @staticmethod
     def _field(parent: ttk.Frame, row: int, label: str, variable: tk.StringVar, show: str | None = None) -> None:
@@ -113,13 +123,7 @@ class SetupWindow:
             "username": self.username.get().strip(),
             "stream": self.stream.get(),
             "rtsp_transport": "tcp",
-            "window_width": 1100,
-            "window_height": 700,
             "onvif_port": onvif_port,
-            "theme": self.colors["name"],
-            "show_branding": True,
-            "show_date": True,
-            "show_ptz": True,
         }
 
     def test(self) -> bool:
@@ -144,8 +148,8 @@ class SetupWindow:
             config = self.values()
             if not self.test():
                 return False
-            save_config(config)
             save_password(config, self.password.get())
+            add_camera(config)
         except Exception as exc:
             messagebox.showerror(APP_NAME, f"Setup could not be saved:\n\n{exc}")
             return False

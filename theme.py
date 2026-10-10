@@ -141,6 +141,7 @@ def apply_style(root: tk.Misc, colors: dict) -> ttk.Style:
     style.configure(
         "Icon.TButton",
         background=colors["bg_alt"],
+        width=0,
         foreground=colors["text"],
         borderwidth=0,
         focusthickness=0,
@@ -165,7 +166,63 @@ def apply_style(root: tk.Misc, colors: dict) -> ttk.Style:
     )
     style.map(
         "Accent.TButton",
+        background=[
+            ("disabled", colors["surface"]),
+            ("active", colors["accent_hover"]),
+            ("pressed", colors["accent_hover"]),
+        ],
+        foreground=[("disabled", colors["text_dim"])],
+    )
+
+    # Icon button rendered in the "on" state (e.g. Multi view while active).
+    style.configure(
+        "Active.TButton",
+        background=colors["accent"],
+        width=0,
+        foreground=colors["accent_text"],
+        borderwidth=0,
+        focusthickness=0,
+        focuscolor=colors["accent"],
+        padding=(8, 6),
+        font=("Segoe UI", 11),
+    )
+    style.map(
+        "Active.TButton",
         background=[("active", colors["accent_hover"]), ("pressed", colors["accent_hover"])],
+    )
+
+    style.configure(
+        "Icon.TMenubutton",
+        background=colors["bg_alt"],
+        foreground=colors["text"],
+        arrowcolor=colors["text"],
+        borderwidth=0,
+        relief="flat",
+        padding=(8, 6),
+        font=("Segoe UI", 11),
+    )
+    style.map(
+        "Icon.TMenubutton",
+        background=[("active", colors["surface_hover"]), ("pressed", colors["surface_hover"])],
+    )
+
+    style.configure(
+        "TProgressbar",
+        background=colors["accent"],
+        troughcolor=colors["bg_alt"],
+        bordercolor=colors["bg_alt"],
+        lightcolor=colors["accent"],
+        darkcolor=colors["accent"],
+        thickness=6,
+    )
+    style.configure(
+        "Video.Horizontal.TProgressbar",
+        background=colors["accent"],
+        troughcolor="#1c1f24",
+        bordercolor="#1c1f24",
+        lightcolor=colors["accent"],
+        darkcolor=colors["accent"],
+        thickness=4,
     )
 
     style.configure(

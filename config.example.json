@@ -1,16 +1,31 @@
 {
-  "camera_name": "Living Room",
-  "host": "192.168.1.52",
-  "port": 554,
-  "username": "camerauser",
-  "stream": "stream1",
-  "rtsp_transport": "tcp",
-  "window_width": 1100,
-  "window_height": 700,
-  "onvif_port": 2020,
-  "ptz_speed": 0.5,
   "theme": "dark",
   "show_branding": true,
   "show_date": true,
-  "show_ptz": true
+  "show_ptz": true,
+  "window_width": 1100,
+  "window_height": 700,
+  "multiview_stream": "stream2",
+  "cameras": [
+    {
+      "camera_name": "Living Room",
+      "host": "192.168.1.52",
+      "port": 554,
+      "username": "camerauser",
+      "stream": "stream1",
+      "rtsp_transport": "tcp",
+      "onvif_port": 2020,
+      "ptz_speed": 0.5
+    },
+    {
+      "camera_name": "Front Door",
+      "host": "192.168.1.53",
+      "port": 554,
+      "username": "camerauser",
+      "stream": "stream1",
+      "rtsp_transport": "tcp",
+      "onvif_port": 2020,
+      "ptz_speed": 0.5
+    }
+  ]
 }

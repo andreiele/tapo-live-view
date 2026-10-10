@@ -1,6 +1,6 @@
 # Tapo Live View
 
-A modern Windows desktop app that opens one TP-Link Tapo camera's local RTSP live feed in its own window — direct to the camera over your home network, no browser and no Tapo cloud login involved.
+A modern Windows desktop app that opens your TP-Link Tapo cameras' local RTSP live feeds in its own window — direct to the camera over your home network, no browser and no Tapo cloud login involved.
 
 > The screenshots below use a placeholder lion illustration instead of a real camera feed.
 
@@ -11,14 +11,16 @@ A modern Windows desktop app that opens one TP-Link Tapo camera's local RTSP liv
 ## Features
 
 - One-click live view from a Windows desktop shortcut — no terminal window, ever
+- The window opens instantly with a loading screen, then a camera list showing which cameras are online
+- Multiple cameras: pick one to watch, switch from the toolbar, or toggle **Multi view** to watch them all in a grid
 - Direct local-network RTSP connection, decoded locally with FFmpeg/ffplay
-- High-quality (`stream1`) and standard-quality (`stream2`) switching
+- High-quality (`stream1`) and standard-quality (`stream2`) switching (🎞 HD / SD)
 - Reconnect, mute/unmute and fullscreen controls
 - On-screen pan/tilt controls over ONVIF for cameras that physically move, rendered as an always-on-top overlay so they never get hidden behind the video
 - Light and dark themes
 - A live session timer and today's date in the toolbar
-- A **Settings** panel to show/hide the app branding, the date, and the PTZ pad
-- An **About** window with a link back to this repository
+- A **Settings** panel (opens inside the app window) with a theme switch and toggles for the branding, the date and the PTZ pad
+- An **About** panel with a link back to this repository
 - Camera password stored in Windows Credential Manager, not `config.json`
 - A guided setup wizard: install → camera setup → live view, all in one window, with a green checkmark once the connection test passes
 
@@ -52,13 +54,21 @@ A modern Windows desktop app that opens one TP-Link Tapo camera's local RTSP liv
 
    ![Connected](docs/screenshots/connected.png)
 
-5. Run `Create Desktop Shortcut.bat` so **Tapo Live View** opens straight from the desktop next time — with no console flash at all.
+5. Run `Create Desktop Shortcut.bat` so **Tapo Live View** opens straight from the desktop next time — with no console flash at all. The shortcut launches the app's windowless Python directly; if you made a shortcut with an older version (one pointing at `Run.bat`), run this again to replace it.
 
-Day to day, just use `Run.bat` or the desktop shortcut; it skips straight to the live view once setup is done.
+Day to day, use the desktop shortcut (`Run.bat` also works, but as a `.bat` file Windows briefly shows a console window first). The window appears straight away with a loading screen, then shows your camera list.
+
+## Cameras and multi view
+
+- **Camera list** — after loading, every camera gets a card showing whether it's online (checked in the background). Click a card to watch it.
+- **Add camera** — the ＋ card or button opens the same setup form; each camera's password is stored separately in Windows Credential Manager. The ✕ on a card removes that camera.
+- **Switch camera** — in the live view, the 📷 dropdown switches to another camera without going back; **◀ Cameras** returns to the list.
+- **Multi view** — the **▦ Multi view** button (in the list or the toolbar) shows all cameras in a grid and toggles back to a single camera. Click a tile's title bar to select it (PTZ and audio follow the selected tile); double-click it to open that camera on its own. Multi view uses the lighter `stream2` by default — **🎞 HD/SD** switches it.
+- Existing single-camera `config.json` files are converted to the new `cameras` list automatically.
 
 ## Settings
 
-Open **⚙ Settings** from the toolbar to toggle:
+Open **⚙ Settings** from the toolbar (or the camera list). It opens as a panel inside the app window, and every change applies and saves immediately:
 
 - **Appearance** — light or dark theme, applied instantly
 - **On-screen display** — show/hide the "Tapo Live View" branding and today's date
@@ -87,15 +97,17 @@ Click **ℹ About** in the toolbar for a short description of the app and a link
 
 | File | Purpose |
 |---|---|
-| `Setup.bat` / `Run.bat` | Silent (no console) launchers — hand off to `run_hidden.vbs` |
+| `Setup.bat` / `Run.bat` | Launchers that hand off to `run_hidden.vbs` (prefer the desktop shortcut day to day) |
 | `run_hidden.vbs` | Launches the wizard with `pythonw`/`py -3w`, invisibly |
-| `wizard.py` | Single-window onboarding flow: install → setup → live |
-| `Create Desktop Shortcut.bat` | Creates a desktop shortcut that opens silently |
+| `wizard.py` | The app's single window: install → setup → loading → camera list → live |
+| `Create Desktop Shortcut.bat` | Creates a desktop shortcut that runs `.venv\Scripts\pythonw.exe wizard.py` directly — no console |
 | `first_run.py` | Camera setup form, used standalone or embedded in the wizard |
-| `live.py` | The live-view window: embedded ffplay, PTZ overlay, settings, timer |
+| `selector.py` | Loading screen and camera list (online status, add/remove, multi view) |
+| `live.py` | The live view: one camera or a multi-view grid of embedded ffplay players, PTZ overlay, timer |
 | `theme.py` | Light/dark palettes, ttk styling, window icon helper |
+| `modal.py` | In-window panel base (dimmed backdrop + card), toggle switch and segmented control |
 | `settings_window.py` | Settings panel (theme, branding, date, PTZ toggles) |
-| `about_window.py` | About window |
+| `about_window.py` | About panel |
 | `app_common.py` | Configuration, RTSP URL, credential and network helpers |
 | `ptz.py` | ONVIF pan/tilt controller used by the live view |
 | `demo_player.py` / `assets/lion.png` | Stand-in video source used only by `TAPO_DEMO=1` (screenshots/QA) |

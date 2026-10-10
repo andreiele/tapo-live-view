@@ -38,19 +38,75 @@ def setup_logging() -> None:
     )
 
 
+CAMERA_KEYS = (
+    "camera_name",
+    "host",
+    "port",
+    "username",
+    "stream",
+    "rtsp_transport",
+    "onvif_port",
+    "ptz_speed",
+)
+
+
 def load_config() -> dict:
+    """Load config.json, migrating the old single-camera layout to a
+    ``cameras`` list the first time it is seen."""
     if not CONFIG_PATH.exists():
         raise FileNotFoundError("config.json is missing. Run Setup.bat first.")
     with CONFIG_PATH.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
-    required = ("camera_name", "host", "username", "stream")
-    missing = [key for key in required if not data.get(key)]
-    if missing:
-        raise ValueError(f"config.json is missing: {', '.join(missing)}")
+    if "cameras" not in data:
+        camera = {key: data.pop(key) for key in CAMERA_KEYS if key in data}
+        data["cameras"] = [camera] if camera.get("host") else []
+        save_config(data)
+    required = ("camera_name", "host", "username")
+    for index, camera in enumerate(data["cameras"], start=1):
+        missing = [key for key in required if not camera.get(key)]
+        if missing:
+            raise ValueError(f"Camera {index} in config.json is missing: {', '.join(missing)}")
     return apply_display_defaults(data)
 
 
+def has_cameras() -> bool:
+    try:
+        return bool(load_config()["cameras"])
+    except Exception:
+        return False
+
+
+def camera_id(camera: dict) -> str:
+    return f"{camera['host']}:{camera.get('port', 554)}"
+
+
+def add_camera(camera: dict) -> dict:
+    """Add (or replace, matched by address) a camera and save config.json."""
+    try:
+        config = load_config()
+    except FileNotFoundError:
+        config = apply_display_defaults({"cameras": []})
+    cameras = [c for c in config["cameras"] if camera_id(c) != camera_id(camera)]
+    cameras.append(camera)
+    config["cameras"] = cameras
+    save_config(config)
+    return config
+
+
+def remove_camera(config: dict, camera: dict) -> None:
+    config["cameras"] = [c for c in config["cameras"] if camera_id(c) != camera_id(camera)]
+    save_config(config)
+    try:
+        import keyring
+
+        keyring.delete_password(SERVICE_NAME, credential_key(camera))
+    except Exception:
+        pass
+
+
 def save_config(data: dict) -> None:
+    if os.environ.get("TAPO_DEMO") == "1":
+        return  # demo runs use stand-in cameras; never overwrite the real config
     temp = CONFIG_PATH.with_suffix(".json.tmp")
     with temp.open("w", encoding="utf-8") as handle:
         json.dump(data, handle, indent=2)
@@ -63,6 +119,9 @@ DISPLAY_DEFAULTS = {
     "show_branding": True,
     "show_date": True,
     "show_ptz": True,
+    "window_width": 1100,
+    "window_height": 700,
+    "multiview_stream": "stream2",
 }
 
 
