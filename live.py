@@ -217,7 +217,9 @@ class CameraTile:
                 "-fflags", "nobuffer",
                 "-flags", "low_delay",
                 "-framedrop",
-                "-noborder",
+                # No "-noborder": SDL makes borderless windows non-resizable and pins
+                # them at the video's native size, so the embedded player would crop
+                # instead of scaling. The border is stripped when it is embedded.
                 # Open off-screen so the window never flashes before it is embedded.
                 "-left", "-10000",
                 "-top", "-10000",
@@ -265,7 +267,9 @@ class CameraTile:
         deadline = time.time() + timeout
         while time.time() < deadline and not self._stale(generation):
             hwnd = user32.FindWindowW(None, title)
-            if hwnd:
+            # ffplay sets the title, then sizes, positions and finally shows its
+            # window; wait until it is visible so none of that lands after embedding.
+            if hwnd and user32.IsWindowVisible(hwnd):
                 return int(hwnd)
             if process.poll() is not None:
                 return None
