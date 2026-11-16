@@ -86,6 +86,10 @@ class CameraTile:
         # Size of one tap on the pad, in ONVIF generic units (-1..1 covers the full range).
         self.ptz_step = float(camera.get("ptz_step", 0.1))
         self.presets: list[tuple[str, str]] = []
+        # Tapo cameras report ONVIF pan reversed (positive x turns the view left),
+        # so pan is flipped by default; tilt is not. Either can be overridden.
+        self.pan_sign = -1 if camera.get("ptz_invert_pan", True) else 1
+        self.tilt_sign = -1 if camera.get("ptz_invert_tilt", False) else 1
 
         colors = view.colors
         self.frame = tk.Frame(parent, bg=colors["bg"], highlightthickness=2, highlightbackground=colors["bg"])
@@ -422,14 +426,18 @@ class LiveView:
         self._bind("<F11>", lambda _e: self.toggle_fullscreen())
         self._bind("<Escape>", lambda _e: self.leave_fullscreen())
         self._bind("<Configure>", lambda _e: self.position_ptz_overlay())
-        self._bind("<FocusOut>", lambda _e: self._set_overlay_visible(False))
-        self._bind("<FocusIn>", lambda _e: self._set_overlay_visible(True))
-        self._bind("<Unmap>", lambda _e: self._set_overlay_visible(False))
+        # The PTZ pad is a separate always-on-top window, so it has to hide itself
+        # when the app is minimized or another app is in front. Focus/Unmap
+        # events are unreliable for that (they also fire for inner widgets, e.g.
+        # when the "Connecting…" layer is removed, and for the embedded ffplay
+        # windows), so poll the foreground window instead.
+        self._app_active = True
 
         self._build_ui()
         self.build_ptz_overlay()
         self.root.after(50, self._build_tiles)
         self.root.after(1000, self._tick_session)
+        self.root.after(400, self._watch_app_active)
 
     def _bind(self, sequence: str, handler) -> None:
         self._bindings.append((sequence, self.root.bind(sequence, handler, add="+")))
@@ -771,10 +779,36 @@ class LiveView:
         y = vy + vh - oh - margin
         self.ptz_overlay.geometry(f"{ow}x{oh}+{max(vx, x)}+{max(vy, y)}")
 
+    def _is_app_active(self) -> bool:
+        if self.root.state() == "iconic":
+            return False
+        if user32 is None:
+            return True
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return self._app_active  # nothing in front (e.g. mid-switch): keep as is
+        pid = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        ours = {os.getpid()}
+        ours.update(tile.process.pid for tile in self.tiles if tile.process is not None)
+        return pid.value in ours
+
+    def _watch_app_active(self) -> None:
+        if self.closing:
+            return
+        try:
+            active = self._is_app_active()
+        except Exception:
+            active = True
+        if active != self._app_active:
+            self._app_active = active
+            self._set_overlay_visible(active)
+        self.root.after(400, self._watch_app_active)
+
     def _set_overlay_visible(self, visible: bool) -> None:
         if self.ptz_overlay is None or not self.ptz_overlay.winfo_exists():
             return
-        if visible and not self.closing and self.panel is None and self._ptz_wanted():
+        if visible and self._app_active and not self.closing and self.panel is None and self._ptz_wanted():
             self.position_ptz_overlay()
             self.ptz_overlay.deiconify()
             self.ptz_overlay.lift()
@@ -805,7 +839,7 @@ class LiveView:
         self._ptz_hold_job = None
         tile, dx, dy = self._ptz_press_dir
         self._ptz_holding = True
-        pan, tilt = dx * tile.ptz_speed, -dy * tile.ptz_speed
+        pan, tilt = tile.pan_sign * dx * tile.ptz_speed, -tile.tilt_sign * dy * tile.ptz_speed
         threading.Thread(target=tile.ptz.continuous_move, args=(pan, tilt), daemon=True).start()
 
     def _cancel_ptz_hold(self) -> None:
@@ -822,7 +856,7 @@ class LiveView:
             threading.Thread(target=tile.ptz.stop, daemon=True).start()
         elif self._ptz_hold_job is not None:
             self._cancel_ptz_hold()
-            pan, tilt = dx * tile.ptz_step, -dy * tile.ptz_step
+            pan, tilt = tile.pan_sign * dx * tile.ptz_step, -tile.tilt_sign * dy * tile.ptz_step
             threading.Thread(target=tile.ptz.relative_move, args=(pan, tilt), daemon=True).start()
 
     def ptz_goto_preset(self, token: str) -> None:

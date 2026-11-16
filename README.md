@@ -91,6 +91,7 @@ If your camera model physically pans and tilts (for example Tapo C200/C210/C225)
 - If your camera uses a non-default ONVIF port, set it during setup or edit `onvif_port` in `config.json`.
 - `ptz_speed` in `config.json` (0.0–1.0, default `0.5`) controls how fast the camera moves while a direction is held.
 - `ptz_step` in `config.json` (default `0.1`, about 18° of pan) controls how far one tap moves the camera.
+- Tapo cameras report pan direction reversed over ONVIF, so the app flips it by default. If left/right (or up/down) still move the wrong way — for example on a ceiling-mounted camera — set `ptz_invert_pan` or `ptz_invert_tilt` to `true`/`false` for that camera in `config.json`.
 - Hide it any time from **⚙ Settings** or the toolbar's **🕹 PTZ** button.
 
 ## About
