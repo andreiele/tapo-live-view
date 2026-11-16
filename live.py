@@ -488,9 +488,6 @@ class LiveView:
             self.control_row, text="🕹 PTZ", style="Icon.TButton", command=self.toggle_ptz_visibility
         )
         self.ptz_toggle_button.pack(side="left")
-        self.preset_button = ttk.Menubutton(self.control_row, text="📍 Presets", style="Icon.TMenubutton")
-        self.preset_menu = tk.Menu(self.preset_button, tearoff=0)
-        self.preset_button.configure(menu=self.preset_menu)
 
         ttk.Button(self.control_row, text="ℹ About", style="Icon.TButton", command=self.open_about).pack(side="right")
         ttk.Button(self.control_row, text="⚙ Settings", style="Icon.TButton", command=self.open_settings).pack(
@@ -539,27 +536,45 @@ class LiveView:
             menu.add_command(label="▦  All cameras (multi view)", command=lambda: self.set_mode("multi"))
 
     def _refresh_presets(self) -> None:
-        """Show the presets saved on the active camera (e.g. in the Tapo app)."""
+        """Show the active camera's saved presets (e.g. from the Tapo app) beside the pad."""
+        box = getattr(self, "preset_box", None)
+        if box is None or not box.winfo_exists():
+            return
         colors = self.colors
-        menu = self.preset_menu
-        menu.configure(
-            bg=colors["surface"],
-            fg=colors["text"],
-            activebackground=colors["accent"],
-            activeforeground=colors["accent_text"],
-            bd=0,
-            font=("Segoe UI", 10),
-        )
-        menu.delete(0, "end")
+        for child in box.winfo_children():
+            child.destroy()
         tile = self.active_tile
         presets = tile.presets if tile and tile.ptz_supported else []
-        for token, name in presets:
-            menu.add_command(label=name, command=lambda t=token: self.ptz_goto_preset(t))
-        if presets:
-            if not self.preset_button.winfo_ismapped():
-                self.preset_button.pack(side="left", padx=(6, 0), after=self.ptz_toggle_button)
-        else:
-            self.preset_button.pack_forget()
+        if not presets:
+            box.pack_forget()
+            self.position_ptz_overlay()
+            return
+        box.configure(bg=colors["surface"])
+        tk.Label(
+            box, text="Presets", font=("Segoe UI Semibold", 9), bg=colors["surface"], fg=colors["text_dim"]
+        ).grid(row=0, column=0, columnspan=8, sticky="w", padx=2, pady=(0, 2))
+        rows = 3  # match the keypad's height; extra presets spill into more columns
+        for index, (token, name) in enumerate(presets):
+            column, row = divmod(index, rows)
+            tk.Button(
+                box,
+                text=name,
+                width=10,
+                font=("Segoe UI", 10),
+                bg=colors["bg_alt"],
+                fg=colors["text"],
+                activebackground=colors["accent"],
+                activeforeground=colors["accent_text"],
+                relief="flat",
+                bd=0,
+                padx=6,
+                pady=6,
+                cursor="hand2",
+                command=lambda t=token: self.ptz_goto_preset(t),
+            ).grid(row=row + 1, column=column, padx=2, pady=2, sticky="ew")
+        if not box.winfo_ismapped():
+            box.pack(side="left", fill="y", padx=(8, 0), pady=8, before=self.ptz_inner)
+        self.position_ptz_overlay()
 
     def quality_label(self) -> str:
         stream = self.multi_stream if self.mode == "multi" else self.single_stream
@@ -703,7 +718,10 @@ class LiveView:
         pad = tk.Frame(overlay, bg=colors["surface"], highlightthickness=1, highlightbackground=colors["border"])
         pad.pack(padx=0, pady=0)
         inner = tk.Frame(pad, bg=colors["surface"], padx=8, pady=8)
-        inner.pack()
+        inner.pack(side="right")
+        self.ptz_inner = inner
+        # Saved presets sit to the left of the keypad, filled by _refresh_presets.
+        self.preset_box = tk.Frame(pad, bg=colors["surface"])
 
         self.ptz_buttons = []
         for index, (symbol, dx, dy) in enumerate(PTZ_DIRECTIONS):

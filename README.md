@@ -85,7 +85,9 @@ If your camera model physically pans and tilts (for example Tapo C200/C210/C225)
 - The pad only appears after the app confirms the camera supports PTZ; fixed-position cameras never show it.
 - It renders in its own always-on-top overlay window, so it stays visible on top of the video instead of being hidden behind it.
 - Tap a direction to nudge the camera one step (like a tap in the Tapo app), or press and hold to keep moving until you release; the center button returns to the camera's home position (if it has one).
-- **📍 Presets** in the toolbar lists the positions saved on the camera (for example the views you saved in the Tapo app) — pick one to move the camera there. It only appears when the camera has saved presets.
+- The positions saved on the camera (for example the views you saved in the Tapo app) appear as **Presets** buttons beside the keypad — click one to move the camera there. They only appear when the camera has saved presets.
+
+![Pan/tilt keypad with saved presets](docs/screenshots/ptz-presets.png)
 - If your camera uses a non-default ONVIF port, set it during setup or edit `onvif_port` in `config.json`.
 - `ptz_speed` in `config.json` (0.0–1.0, default `0.5`) controls how fast the camera moves while a direction is held.
 - `ptz_step` in `config.json` (default `0.1`, about 18° of pan) controls how far one tap moves the camera.
