@@ -47,6 +47,7 @@ CAMERA_KEYS = (
     "rtsp_transport",
     "onvif_port",
     "ptz_speed",
+    "ptz_step",
 )
 
 

@@ -83,6 +83,9 @@ class CameraTile:
         )
         self.ptz_supported = False
         self.ptz_speed = float(camera.get("ptz_speed", 0.5))
+        # Size of one tap on the pad, in ONVIF generic units (-1..1 covers the full range).
+        self.ptz_step = float(camera.get("ptz_step", 0.1))
+        self.presets: list[tuple[str, str]] = []
 
         colors = view.colors
         self.frame = tk.Frame(parent, bg=colors["bg"], highlightthickness=2, highlightbackground=colors["bg"])
@@ -348,19 +351,22 @@ class CameraTile:
         if self.view.demo:
             time.sleep(float(os.environ.get("TAPO_DEMO_PTZ_DELAY", "1.5")))
             ok = True
+            presets = [("1", "Door"), ("2", "Window"), ("3", "Sofa")]
         else:
             ok = self.password is not None and self.ptz.connect()
+            presets = self.ptz.get_presets() if ok else []
         if self.closed:
             return
         if ok:
-            self.root.after(0, self._on_ptz_ready)
+            self.root.after(0, self._on_ptz_ready, presets)
         else:
             logging.info("Pan/tilt not available for %s: %s", self.name, self.ptz.error)
 
-    def _on_ptz_ready(self) -> None:
+    def _on_ptz_ready(self, presets: list[tuple[str, str]]) -> None:
         if self.closed:
             return
         self.ptz_supported = True
+        self.presets = presets
         self.view.on_tile_ptz_ready(self)
 
 
@@ -406,6 +412,8 @@ class LiveView:
         self.ptz_buttons: list[tk.Button] = []
         self.ptz_overlay: tk.Toplevel | None = None
         self.panel: ModalPanel | None = None
+        self._ptz_hold_job: str | None = None
+        self._ptz_holding = False
 
         self.frame = ttk.Frame(container)
         self.frame.pack(fill="both", expand=True)
@@ -480,6 +488,9 @@ class LiveView:
             self.control_row, text="🕹 PTZ", style="Icon.TButton", command=self.toggle_ptz_visibility
         )
         self.ptz_toggle_button.pack(side="left")
+        self.preset_button = ttk.Menubutton(self.control_row, text="📍 Presets", style="Icon.TMenubutton")
+        self.preset_menu = tk.Menu(self.preset_button, tearoff=0)
+        self.preset_button.configure(menu=self.preset_menu)
 
         ttk.Button(self.control_row, text="ℹ About", style="Icon.TButton", command=self.open_about).pack(side="right")
         ttk.Button(self.control_row, text="⚙ Settings", style="Icon.TButton", command=self.open_settings).pack(
@@ -526,6 +537,29 @@ class LiveView:
         if len(self.cameras) > 1:
             menu.add_separator()
             menu.add_command(label="▦  All cameras (multi view)", command=lambda: self.set_mode("multi"))
+
+    def _refresh_presets(self) -> None:
+        """Show the presets saved on the active camera (e.g. in the Tapo app)."""
+        colors = self.colors
+        menu = self.preset_menu
+        menu.configure(
+            bg=colors["surface"],
+            fg=colors["text"],
+            activebackground=colors["accent"],
+            activeforeground=colors["accent_text"],
+            bd=0,
+            font=("Segoe UI", 10),
+        )
+        menu.delete(0, "end")
+        tile = self.active_tile
+        presets = tile.presets if tile and tile.ptz_supported else []
+        for token, name in presets:
+            menu.add_command(label=name, command=lambda t=token: self.ptz_goto_preset(t))
+        if presets:
+            if not self.preset_button.winfo_ismapped():
+                self.preset_button.pack(side="left", padx=(6, 0), after=self.ptz_toggle_button)
+        else:
+            self.preset_button.pack_forget()
 
     def quality_label(self) -> str:
         stream = self.multi_stream if self.mode == "multi" else self.single_stream
@@ -600,6 +634,7 @@ class LiveView:
 
         self._highlight_active()
         self._refresh_toolbar()
+        self._refresh_presets()
         for tile in self.tiles:
             tile.start()
             tile.init_ptz()
@@ -616,6 +651,7 @@ class LiveView:
         self.current_camera = tile.camera
         self._highlight_active()
         self._refresh_mute_button()
+        self._refresh_presets()
         self._set_overlay_visible(True)
 
     def show_camera(self, camera: dict) -> None:
@@ -649,6 +685,7 @@ class LiveView:
 
     def on_tile_ptz_ready(self, tile: CameraTile) -> None:
         if tile is self.active_tile:
+            self._refresh_presets()
             self._set_overlay_visible(True)
 
     # ---------------------------------------------------- PTZ pad overlay --
@@ -733,17 +770,46 @@ class LiveView:
         if new_value and not (self.active_tile and self.active_tile.ptz_supported):
             messagebox.showinfo(APP_NAME, "This camera does not report pan/tilt support.")
 
+    # A quick tap nudges the camera one step (like the Tapo app); holding the
+    # button past PTZ_HOLD_MS switches to a continuous move until release.
+    PTZ_HOLD_MS = 350
+
     def ptz_press(self, dx: int, dy: int) -> None:
         tile = self.active_tile
         if tile is None:
             return
-        pan = dx * tile.ptz_speed
-        tilt = -dy * tile.ptz_speed
+        self._cancel_ptz_hold()
+        self._ptz_holding = False
+        self._ptz_press_dir = (tile, dx, dy)
+        self._ptz_hold_job = self.root.after(self.PTZ_HOLD_MS, self._ptz_start_hold)
+
+    def _ptz_start_hold(self) -> None:
+        self._ptz_hold_job = None
+        tile, dx, dy = self._ptz_press_dir
+        self._ptz_holding = True
+        pan, tilt = dx * tile.ptz_speed, -dy * tile.ptz_speed
         threading.Thread(target=tile.ptz.continuous_move, args=(pan, tilt), daemon=True).start()
 
+    def _cancel_ptz_hold(self) -> None:
+        if self._ptz_hold_job is not None:
+            self.root.after_cancel(self._ptz_hold_job)
+            self._ptz_hold_job = None
+
     def ptz_release(self) -> None:
-        if self.active_tile is not None:
-            threading.Thread(target=self.active_tile.ptz.stop, daemon=True).start()
+        if not hasattr(self, "_ptz_press_dir"):
+            return
+        tile, dx, dy = self._ptz_press_dir
+        if self._ptz_holding:
+            self._ptz_holding = False
+            threading.Thread(target=tile.ptz.stop, daemon=True).start()
+        elif self._ptz_hold_job is not None:
+            self._cancel_ptz_hold()
+            pan, tilt = dx * tile.ptz_step, -dy * tile.ptz_step
+            threading.Thread(target=tile.ptz.relative_move, args=(pan, tilt), daemon=True).start()
+
+    def ptz_goto_preset(self, token: str) -> None:
+        if self.active_tile is not None and self.active_tile.ptz_supported:
+            threading.Thread(target=self.active_tile.ptz.goto_preset, args=(token,), daemon=True).start()
 
     def ptz_home(self) -> None:
         if self.active_tile is not None:
@@ -812,6 +878,7 @@ class LiveView:
         for tile in self.tiles:
             tile.apply_theme(colors)
         self._highlight_active()
+        self._refresh_presets()
         if self.ptz_overlay is not None and self.ptz_overlay.winfo_exists():
             self.ptz_overlay_frame.configure(bg=colors["surface"], highlightbackground=colors["border"])
             for child in self.ptz_overlay_frame.winfo_children():
@@ -873,6 +940,7 @@ class LiveView:
         if self.closing:
             return
         self.closing = True
+        self._cancel_ptz_hold()
         self.leave_fullscreen()
         if self.panel is not None:
             self.panel.close()

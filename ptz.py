@@ -72,6 +72,45 @@ class PTZController:
         except Exception as exc:
             logging.warning("PTZ move failed for %s: %s", self.host, exc)
 
+    def relative_move(self, pan: float, tilt: float) -> None:
+        """Nudge the camera by a fixed step (like a single tap in the Tapo app)."""
+        with self._lock:
+            ptz, token = self._ptz, self._profile_token
+        if not ptz or not token:
+            return
+        try:
+            ptz.RelativeMove(
+                {
+                    "ProfileToken": token,
+                    "Translation": {"PanTilt": {"x": pan, "y": tilt}},
+                }
+            )
+        except Exception as exc:
+            logging.warning("PTZ step failed for %s: %s", self.host, exc)
+
+    def get_presets(self) -> list[tuple[str, str]]:
+        """Return the (token, name) presets saved on the camera, e.g. from the Tapo app."""
+        with self._lock:
+            ptz, token = self._ptz, self._profile_token
+        if not ptz or not token:
+            return []
+        try:
+            presets = ptz.GetPresets({"ProfileToken": token}) or []
+        except Exception as exc:
+            logging.warning("PTZ presets failed for %s: %s", self.host, exc)
+            return []
+        return [(str(p.token), str(getattr(p, "Name", None) or p.token)) for p in presets]
+
+    def goto_preset(self, preset_token: str) -> None:
+        with self._lock:
+            ptz, token = self._ptz, self._profile_token
+        if not ptz or not token:
+            return
+        try:
+            ptz.GotoPreset({"ProfileToken": token, "PresetToken": preset_token})
+        except Exception as exc:
+            logging.warning("PTZ preset failed for %s: %s", self.host, exc)
+
     def stop(self) -> None:
         with self._lock:
             ptz, token = self._ptz, self._profile_token
