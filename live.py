@@ -83,6 +83,13 @@ class CameraTile:
         )
         self.ptz_supported = False
         self.ptz_speed = float(camera.get("ptz_speed", 0.5))
+        # Size of one tap on the pad, in ONVIF generic units (-1..1 covers the full range).
+        self.ptz_step = float(camera.get("ptz_step", 0.1))
+        self.presets: list[tuple[str, str]] = []
+        # Tapo cameras report ONVIF pan reversed (positive x turns the view left),
+        # so pan is flipped by default; tilt is not. Either can be overridden.
+        self.pan_sign = -1 if camera.get("ptz_invert_pan", True) else 1
+        self.tilt_sign = -1 if camera.get("ptz_invert_tilt", False) else 1
 
         colors = view.colors
         self.frame = tk.Frame(parent, bg=colors["bg"], highlightthickness=2, highlightbackground=colors["bg"])
@@ -348,19 +355,22 @@ class CameraTile:
         if self.view.demo:
             time.sleep(float(os.environ.get("TAPO_DEMO_PTZ_DELAY", "1.5")))
             ok = True
+            presets = [("1", "Door"), ("2", "Window"), ("3", "Sofa")]
         else:
             ok = self.password is not None and self.ptz.connect()
+            presets = self.ptz.get_presets() if ok else []
         if self.closed:
             return
         if ok:
-            self.root.after(0, self._on_ptz_ready)
+            self.root.after(0, self._on_ptz_ready, presets)
         else:
             logging.info("Pan/tilt not available for %s: %s", self.name, self.ptz.error)
 
-    def _on_ptz_ready(self) -> None:
+    def _on_ptz_ready(self, presets: list[tuple[str, str]]) -> None:
         if self.closed:
             return
         self.ptz_supported = True
+        self.presets = presets
         self.view.on_tile_ptz_ready(self)
 
 
@@ -406,6 +416,8 @@ class LiveView:
         self.ptz_buttons: list[tk.Button] = []
         self.ptz_overlay: tk.Toplevel | None = None
         self.panel: ModalPanel | None = None
+        self._ptz_hold_job: str | None = None
+        self._ptz_holding = False
 
         self.frame = ttk.Frame(container)
         self.frame.pack(fill="both", expand=True)
@@ -414,14 +426,18 @@ class LiveView:
         self._bind("<F11>", lambda _e: self.toggle_fullscreen())
         self._bind("<Escape>", lambda _e: self.leave_fullscreen())
         self._bind("<Configure>", lambda _e: self.position_ptz_overlay())
-        self._bind("<FocusOut>", lambda _e: self._set_overlay_visible(False))
-        self._bind("<FocusIn>", lambda _e: self._set_overlay_visible(True))
-        self._bind("<Unmap>", lambda _e: self._set_overlay_visible(False))
+        # The PTZ pad is a separate always-on-top window, so it has to hide itself
+        # when the app is minimized or another app is in front. Focus/Unmap
+        # events are unreliable for that (they also fire for inner widgets, e.g.
+        # when the "Connecting…" layer is removed, and for the embedded ffplay
+        # windows), so poll the foreground window instead.
+        self._app_active = True
 
         self._build_ui()
         self.build_ptz_overlay()
         self.root.after(50, self._build_tiles)
         self.root.after(1000, self._tick_session)
+        self.root.after(400, self._watch_app_active)
 
     def _bind(self, sequence: str, handler) -> None:
         self._bindings.append((sequence, self.root.bind(sequence, handler, add="+")))
@@ -527,6 +543,47 @@ class LiveView:
             menu.add_separator()
             menu.add_command(label="▦  All cameras (multi view)", command=lambda: self.set_mode("multi"))
 
+    def _refresh_presets(self) -> None:
+        """Show the active camera's saved presets (e.g. from the Tapo app) beside the pad."""
+        box = getattr(self, "preset_box", None)
+        if box is None or not box.winfo_exists():
+            return
+        colors = self.colors
+        for child in box.winfo_children():
+            child.destroy()
+        tile = self.active_tile
+        presets = tile.presets if tile and tile.ptz_supported else []
+        if not presets:
+            box.pack_forget()
+            self.position_ptz_overlay()
+            return
+        box.configure(bg=colors["surface"])
+        tk.Label(
+            box, text="Presets", font=("Segoe UI Semibold", 9), bg=colors["surface"], fg=colors["text_dim"]
+        ).grid(row=0, column=0, columnspan=8, sticky="w", padx=2, pady=(0, 2))
+        rows = 3  # match the keypad's height; extra presets spill into more columns
+        for index, (token, name) in enumerate(presets):
+            column, row = divmod(index, rows)
+            tk.Button(
+                box,
+                text=name,
+                width=10,
+                font=("Segoe UI", 10),
+                bg=colors["bg_alt"],
+                fg=colors["text"],
+                activebackground=colors["accent"],
+                activeforeground=colors["accent_text"],
+                relief="flat",
+                bd=0,
+                padx=6,
+                pady=6,
+                cursor="hand2",
+                command=lambda t=token: self.ptz_goto_preset(t),
+            ).grid(row=row + 1, column=column, padx=2, pady=2, sticky="ew")
+        if not box.winfo_ismapped():
+            box.pack(side="left", fill="y", padx=(8, 0), pady=8, before=self.ptz_inner)
+        self.position_ptz_overlay()
+
     def quality_label(self) -> str:
         stream = self.multi_stream if self.mode == "multi" else self.single_stream
         return "🎞 HD" if stream == "stream1" else "🎞 SD"
@@ -600,6 +657,7 @@ class LiveView:
 
         self._highlight_active()
         self._refresh_toolbar()
+        self._refresh_presets()
         for tile in self.tiles:
             tile.start()
             tile.init_ptz()
@@ -616,6 +674,7 @@ class LiveView:
         self.current_camera = tile.camera
         self._highlight_active()
         self._refresh_mute_button()
+        self._refresh_presets()
         self._set_overlay_visible(True)
 
     def show_camera(self, camera: dict) -> None:
@@ -649,6 +708,7 @@ class LiveView:
 
     def on_tile_ptz_ready(self, tile: CameraTile) -> None:
         if tile is self.active_tile:
+            self._refresh_presets()
             self._set_overlay_visible(True)
 
     # ---------------------------------------------------- PTZ pad overlay --
@@ -666,7 +726,10 @@ class LiveView:
         pad = tk.Frame(overlay, bg=colors["surface"], highlightthickness=1, highlightbackground=colors["border"])
         pad.pack(padx=0, pady=0)
         inner = tk.Frame(pad, bg=colors["surface"], padx=8, pady=8)
-        inner.pack()
+        inner.pack(side="right")
+        self.ptz_inner = inner
+        # Saved presets sit to the left of the keypad, filled by _refresh_presets.
+        self.preset_box = tk.Frame(pad, bg=colors["surface"])
 
         self.ptz_buttons = []
         for index, (symbol, dx, dy) in enumerate(PTZ_DIRECTIONS):
@@ -716,10 +779,36 @@ class LiveView:
         y = vy + vh - oh - margin
         self.ptz_overlay.geometry(f"{ow}x{oh}+{max(vx, x)}+{max(vy, y)}")
 
+    def _is_app_active(self) -> bool:
+        if self.root.state() == "iconic":
+            return False
+        if user32 is None:
+            return True
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return self._app_active  # nothing in front (e.g. mid-switch): keep as is
+        pid = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        ours = {os.getpid()}
+        ours.update(tile.process.pid for tile in self.tiles if tile.process is not None)
+        return pid.value in ours
+
+    def _watch_app_active(self) -> None:
+        if self.closing:
+            return
+        try:
+            active = self._is_app_active()
+        except Exception:
+            active = True
+        if active != self._app_active:
+            self._app_active = active
+            self._set_overlay_visible(active)
+        self.root.after(400, self._watch_app_active)
+
     def _set_overlay_visible(self, visible: bool) -> None:
         if self.ptz_overlay is None or not self.ptz_overlay.winfo_exists():
             return
-        if visible and not self.closing and self.panel is None and self._ptz_wanted():
+        if visible and self._app_active and not self.closing and self.panel is None and self._ptz_wanted():
             self.position_ptz_overlay()
             self.ptz_overlay.deiconify()
             self.ptz_overlay.lift()
@@ -733,17 +822,46 @@ class LiveView:
         if new_value and not (self.active_tile and self.active_tile.ptz_supported):
             messagebox.showinfo(APP_NAME, "This camera does not report pan/tilt support.")
 
+    # A quick tap nudges the camera one step (like the Tapo app); holding the
+    # button past PTZ_HOLD_MS switches to a continuous move until release.
+    PTZ_HOLD_MS = 350
+
     def ptz_press(self, dx: int, dy: int) -> None:
         tile = self.active_tile
         if tile is None:
             return
-        pan = dx * tile.ptz_speed
-        tilt = -dy * tile.ptz_speed
+        self._cancel_ptz_hold()
+        self._ptz_holding = False
+        self._ptz_press_dir = (tile, dx, dy)
+        self._ptz_hold_job = self.root.after(self.PTZ_HOLD_MS, self._ptz_start_hold)
+
+    def _ptz_start_hold(self) -> None:
+        self._ptz_hold_job = None
+        tile, dx, dy = self._ptz_press_dir
+        self._ptz_holding = True
+        pan, tilt = tile.pan_sign * dx * tile.ptz_speed, -tile.tilt_sign * dy * tile.ptz_speed
         threading.Thread(target=tile.ptz.continuous_move, args=(pan, tilt), daemon=True).start()
 
+    def _cancel_ptz_hold(self) -> None:
+        if self._ptz_hold_job is not None:
+            self.root.after_cancel(self._ptz_hold_job)
+            self._ptz_hold_job = None
+
     def ptz_release(self) -> None:
-        if self.active_tile is not None:
-            threading.Thread(target=self.active_tile.ptz.stop, daemon=True).start()
+        if not hasattr(self, "_ptz_press_dir"):
+            return
+        tile, dx, dy = self._ptz_press_dir
+        if self._ptz_holding:
+            self._ptz_holding = False
+            threading.Thread(target=tile.ptz.stop, daemon=True).start()
+        elif self._ptz_hold_job is not None:
+            self._cancel_ptz_hold()
+            pan, tilt = tile.pan_sign * dx * tile.ptz_step, -tile.tilt_sign * dy * tile.ptz_step
+            threading.Thread(target=tile.ptz.relative_move, args=(pan, tilt), daemon=True).start()
+
+    def ptz_goto_preset(self, token: str) -> None:
+        if self.active_tile is not None and self.active_tile.ptz_supported:
+            threading.Thread(target=self.active_tile.ptz.goto_preset, args=(token,), daemon=True).start()
 
     def ptz_home(self) -> None:
         if self.active_tile is not None:
@@ -812,6 +930,7 @@ class LiveView:
         for tile in self.tiles:
             tile.apply_theme(colors)
         self._highlight_active()
+        self._refresh_presets()
         if self.ptz_overlay is not None and self.ptz_overlay.winfo_exists():
             self.ptz_overlay_frame.configure(bg=colors["surface"], highlightbackground=colors["border"])
             for child in self.ptz_overlay_frame.winfo_children():
@@ -873,6 +992,7 @@ class LiveView:
         if self.closing:
             return
         self.closing = True
+        self._cancel_ptz_hold()
         self.leave_fullscreen()
         if self.panel is not None:
             self.panel.close()
